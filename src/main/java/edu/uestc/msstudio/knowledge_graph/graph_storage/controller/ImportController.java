@@ -18,7 +18,10 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 @RestController
@@ -81,10 +84,68 @@ public class ImportController
         return results;
     }
 
-    @PostMapping("/list/papers")
+    private List<Author> solveAllAuthor(@RequestBody List<Author> authors)
+    {
+        Set<String> names = new HashSet<>();
+        Map<String, Author> name_author_map = new HashMap<>();
+        authors.forEach(n -> {
+            String name = n.getName();
+            name_author_map.put(name, n);
+            names.add(name);
+        });
+        List<Author> existAuthors = authorRepo.findByNameIn(names);
+        List<Author> allAuthors = new ArrayList<>();
+        List<Author> results = new ArrayList<>();
+
+        for (Author author : existAuthors) {
+            name_author_map.put(author.getName(), author);
+        }
+        name_author_map.entrySet().forEach(
+                set -> {
+                    allAuthors.add(set.getValue());
+                }
+        );
+
+        authorRepo.saveAll(allAuthors).forEach(
+                single -> {
+                    results.add(single);
+                }
+        );
+
+        return results;
+    }
+
+    @PostMapping("/list/paper")
     public List<Paper> createPapers(@RequestBody List<Paper> papers)
     {
-        return null;
+        if (papers.size() < 1) {
+            return papers;
+        }
+
+        List<Paper> results = new ArrayList<>();
+
+        Set<Author> authorSet = new HashSet<>();
+        papers.forEach(
+                paper -> {
+                    authorSet.addAll(paper.getAuthors());
+                }
+        );
+        solveAllAuthor(new ArrayList<>(authorSet));
+
+        for (Paper paper : papers) {
+            Set<Author> paperAuthors = paper.getAuthors();
+            for (Author author : paperAuthors) {
+                author.worksWith(paperAuthors);
+            }
+            authorRepo.saveAll(paperAuthors);
+        }
+        paperRepo.saveAll(papers).forEach(
+                result -> {
+                    results.add(result);
+                }
+        );
+
+        return results;
     }
 
     @PostMapping("/paper")
@@ -92,13 +153,12 @@ public class ImportController
     {
         Set<Author> authors = paper.getAuthors();
 
-        for (Author author : authors) {
-            author = createAuthor(author);
-        }
+        solveAllAuthor(new ArrayList<>(authors));
+
         for (Author author : authors) {
             author.worksWith(authors);
-            authorRepo.save(author);
         }
+        authorRepo.saveAll(authors);
         paperRepo.save(paper);
 
         return paper;
@@ -108,10 +168,22 @@ public class ImportController
     public Page<Paper> getPapers(@RequestParam String name,
             @RequestParam(value = "page", defaultValue = "0") Integer page,
             @RequestParam(value = "size", defaultValue = "15") Integer size)
-
     {
         Sort sort = new Sort(Sort.Direction.DESC, "id");
         Pageable pageable = new PageRequest(page, size, sort);
         return paperRepo.findByAuthorTextContains(name, pageable);
+    }
+
+    @DeleteMapping("/paper")
+    public List<Paper> deletePaper(@RequestParam String url)
+    {
+        List<Paper> papers = paperRepo.findAllByUrl(url);
+        if (papers != null) {
+            for (Paper paper : papers) {
+                paperRepo.delete(paper);
+            }
+            return papers;
+        }
+        else { return null; }
     }
 }
